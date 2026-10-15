@@ -12,6 +12,7 @@
  *   every data-* attribute on its container.
  */
 
+import { createExternalControlsPlugin } from './external-controls-plugin.mjs';
 import { createLayersKeyPlugin } from './layers-key-plugin.mjs';
 import { createMapLoadingPlugin } from './map-loading-plugin.mjs';
 import { createStaticMapPlugin } from './static-map-plugin.mjs';
@@ -301,7 +302,7 @@ function escapeHtml(value) {
  * @param {object} properties
  * @returns {string}
  */
-export function featureDetailsHtml(properties) {
+export function featureDetailsHtml(properties = {}) {
 	const rows = properties.consulteeId
 		? [
 				['Category', properties.consulteeCategory],
@@ -322,33 +323,35 @@ export function featureDetailsHtml(properties) {
  *
  * @param {object} map - InteractiveMap instance
  * @param {object} interactPlugin
+ * @param {string} [detailsPanelId] - the panel's id; unique per map when a page hosts several
  */
-function wireFeatureDetails(map, interactPlugin) {
+function wireFeatureDetails(map, interactPlugin, detailsPanelId = DETAILS_PANEL_ID) {
 	map.on('map:ready', () => {
 		// the core attaches enable etc. to the plugin when it mounts, so not before map:ready
 		interactPlugin.enable();
-		map.addPanel(DETAILS_PANEL_ID, {
+		map.addPanel(detailsPanelId, {
 			focus: false,
 			label: 'Selected on the map',
-			html: `<div id="${DETAILS_PANEL_ID}-content"></div>`,
+			html: `<div id="${detailsPanelId}-content"></div>`,
 			mobile: { slot: 'drawer', dismissible: true },
 			tablet: { slot: 'left-top', dismissible: true, width: '300px' },
 			desktop: { slot: 'left-top', dismissible: true, width: '300px' }
 		});
-		map.hidePanel(DETAILS_PANEL_ID);
+		map.hidePanel(detailsPanelId);
 	});
 	map.on('interact:selectionchange', ({ selectedFeatures }) => {
 		if (selectedFeatures.length > 0) {
-			document.getElementById(`${DETAILS_PANEL_ID}-content`).innerHTML = featureDetailsHtml(
-				selectedFeatures[0].properties
-			);
-			map.showPanel(DETAILS_PANEL_ID);
+			const content = document.getElementById(`${detailsPanelId}-content`);
+			if (content) {
+				content.innerHTML = featureDetailsHtml(selectedFeatures[0].properties);
+				map.showPanel(detailsPanelId);
+			}
 		} else {
-			map.hidePanel(DETAILS_PANEL_ID);
+			map.hidePanel(detailsPanelId);
 		}
 	});
 	map.on('app:panelclosed', ({ panelId }) => {
-		if (panelId === DETAILS_PANEL_ID) {
+		if (panelId === detailsPanelId) {
 			interactPlugin.clear();
 		}
 	});
@@ -397,6 +400,10 @@ export function initConsulteeMap(mapId) {
 			deselectOnClickOutside: true,
 			layers: buildSelectableLayers(datasets)
 		});
+		// datasets must reach the plugin but can't ride in the page config's JSON
+		const externalControlsPlugin = config.externalControls
+			? createExternalControlsPlugin({ ...config.externalControls, datasets })
+			: null;
 
 		const map = new defra.InteractiveMap(mapId, {
 			behaviour: 'inline',
@@ -411,12 +418,13 @@ export function initConsulteeMap(mapId) {
 				layersKeyPlugin,
 				staticMapPlugin,
 				loadingPlugin,
-				...(interactPlugin ? [interactPlugin] : [])
+				...(interactPlugin ? [interactPlugin] : []),
+				...(externalControlsPlugin ? [externalControlsPlugin] : [])
 			]
 		});
 		map.on('map:firstidle', () => loadingPlugin.dismiss());
 		if (interactPlugin) {
-			wireFeatureDetails(map, interactPlugin);
+			wireFeatureDetails(map, interactPlugin, config.detailsPanelId);
 		}
 	} catch {
 		loadingPlugin.dismiss();
